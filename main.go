@@ -2,13 +2,20 @@ package main
 
 import (
     "fmt"
+    "math"
     "math/rand"
     "time"
-    "math"
 
     ui "github.com/gizak/termui/v3"
     "github.com/gizak/termui/v3/widgets"
 )
+
+// PerformanceMetrics stores statistics across iterations
+type PerformanceMetrics struct {
+    BestFitness []float64
+    StartTime   time.Time
+    EndTime     time.Time
+}
 
 func main() {
     rand.Seed(time.Now().UnixNano())
@@ -37,6 +44,7 @@ func main() {
 
 func runRealTimeSimulation(vms []*VM, tasks []*Task) {
     swarm := NewSwarm(20, len(tasks), len(vms), vms, tasks)
+    metrics := &PerformanceMetrics{BestFitness: []float64{}, StartTime: time.Now()}
 
     vmLoadChart := widgets.NewBarChart()
     vmLoadChart.Title = "VM Loads"
@@ -61,25 +69,32 @@ func runRealTimeSimulation(vms []*VM, tasks []*Task) {
     ui.Render(grid)
 
     go func() {
-        for iter := 0; iter < 100; iter++ {
+        numIterations := 100
+        for iter := 0; iter < numIterations; iter++ {
             swarm.Optimize(1, 0.7, 2.0, 2.0)
+            bestFitness := swarm.GetBestFitness()
+            metrics.BestFitness = append(metrics.BestFitness, bestFitness)
 
+            // Update VM load chart
             vmLoads := make([]float64, len(vms))
             for i, vm := range vms {
                 vmLoads[i] = math.Round(vm.CurrentLoad*100) / 100
             }
             vmLoadChart.Data = vmLoads
 
+            // Update task assignments
             assignments := ""
             for taskID, vmID := range swarm.GetBestAssignment() {
                 assignments += fmt.Sprintf("Task %d -> VM %d\n", taskID, vmID)
             }
-            taskAssignment.Text = assignments
+            taskAssignment.Text = fmt.Sprintf("Iteration: %d\nBest Fitness: %.4f\n\n%s", iter+1, bestFitness, assignments)
 
             ui.Render(grid)
-            
-            time.Sleep(1000 * time.Millisecond)
+            time.Sleep(500 * time.Millisecond)
         }
+
+        metrics.EndTime = time.Now()
+        printMetricsSummary(metrics)
     }()
 
     for e := range ui.PollEvents() {
@@ -87,4 +102,42 @@ func runRealTimeSimulation(vms []*VM, tasks []*Task) {
             break
         }
     }
+}
+
+// Compute and print benchmark metrics
+func printMetricsSummary(m *PerformanceMetrics) {
+    n := float64(len(m.BestFitness))
+    if n == 0 {
+        fmt.Println("No fitness data recorded.")
+        return
+    }
+
+    var sum, best, worst float64
+    best = math.MaxFloat64
+    for _, f := range m.BestFitness {
+        sum += f
+        if f < best {
+            best = f
+        }
+        if f > worst {
+            worst = f
+        }
+    }
+    mean := sum / n
+
+    var variance float64
+    for _, f := range m.BestFitness {
+        variance += math.Pow(f-mean, 2)
+    }
+    stddev := math.Sqrt(variance / n)
+    duration := m.EndTime.Sub(m.StartTime)
+
+    fmt.Println("\n==================== PSO PERFORMANCE METRICS ====================")
+    fmt.Printf("Total Iterations     : %d\n", int(n))
+    fmt.Printf("Best Fitness Found   : %.6f\n", best)
+    fmt.Printf("Worst Fitness Found  : %.6f\n", worst)
+    fmt.Printf("Average Fitness      : %.6f\n", mean)
+    fmt.Printf("Std. Deviation       : %.6f\n", stddev)
+    fmt.Printf("Total Runtime        : %.3fs\n", duration.Seconds())
+    fmt.Println("================================================================")
 }
